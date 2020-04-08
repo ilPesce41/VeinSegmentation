@@ -1,3 +1,10 @@
+"""
+@author: Cole Hill
+University of South Florida
+Spring 2020
+Computer Vision
+"""
+
 from scipy.ndimage import gaussian_filter,gaussian_filter1d,sobel
 import numpy as np
 import cv2
@@ -15,7 +22,7 @@ def build_image_tensor(image,sigma=1):
     """
     Hxx = gaussian_filter1d(image,sigma,axis=1,order=2)
     Hyy = gaussian_filter1d(image,sigma,axis=0,order=2)
-    Hxy = gaussian_filter(image,sigma,order=1)
+    Hxy = gaussian_filter(image,sigma,order=2)
     return Hxx, Hxy, Hyy
 
 def calculate_eigs(Hxx,Hxy,Hyy):
@@ -72,10 +79,12 @@ def clean_image(image):
 if __name__ == "__main__":
 
     beta,c,sigma = map(float,sys.argv[1:])
-    img_path = r"C:\Users\chill\Documents\CV Term Project\Workspace\IR Image2.png"
+    img_path = r"C:\Users\chill\Pictures\Camera Roll\Outside_Modified.jpg"
     
     image = imread(img_path)
+    image = cv2.resize(image,(image.shape[0]*3,image.shape[1]*3))
     out_im = image.copy()
+    image = gaussian_filter(image,sigma=5)
     image = cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)
 
     # print(image)
@@ -87,7 +96,13 @@ if __name__ == "__main__":
 
     print(out_im.shape)
     print(vesselness.shape)
-    out_im[:,:,1] = vesselness + out_im[:,:,1]
+
+    for i in range(out_im.shape[0]):
+        for j in range(out_im.shape[1]):
+            if vesselness[i,j]>0 :#and vesselness[i,j]<250:
+                out_im[i,j] = [0,255,0]
+    # out_im[:,:,1] = np.where()
+    # print(vesselness)
     imwrite("sub.png",out_im)
 
-# 7 .0014 6
+# 7 .0014 6 Hand Example
