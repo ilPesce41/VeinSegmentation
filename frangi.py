@@ -10,6 +10,7 @@ import numpy as np
 import cv2
 from cv2 import imread,imwrite
 import sys
+import numba
 
 #Blob and structureness parameters as defined in `Frangi-Net: A Neural Network Approach to Vessel Segmentation`
 beta = 0.5
@@ -45,9 +46,7 @@ def calculate_vesselness(l1,l2,beta,c):
     S = np.sqrt(l1**2 + l2**2)
     V0_l2pos = np.exp( -(R**2)/(2*beta**2) )
     V0_l2pos *= (1 - np.exp( -(S**2)/(2*c**2) ))
-    vesselness = np.where(l2<0,0,V0_l2pos)
-    print(np.max(vesselness))
-    # vesselness = np.where(l2<0,0,1)
+    vesselness = np.where(l2>0,0,V0_l2pos)
     return vesselness
 
 def filter_image(image,sigma=1,beta=.5,c=1):
@@ -59,6 +58,7 @@ def filter_image(image,sigma=1,beta=.5,c=1):
     Hxx,Hxy,Hyy = build_image_tensor(image,sigma=sigma)
     l1,l2 = calculate_eigs(Hxx,Hxy,Hyy)
     vesselness = calculate_vesselness(l1,l2,beta,c)
+    vesselness = invert_vesselness(vesselness,image)
     sub = tmp_image-vesselness
     sub = clean_image(sub)
     vesselness = clean_image(vesselness)
@@ -76,24 +76,47 @@ def clean_image(image):
     image = np.where(image==np.inf,0,image)
     return image
 
+@numba.jit
+def thresh(img,val):
+    for i in numba.prange(img.shape[0]):
+        for j in numba.prange(img.shape[1]):
+            if img[i,j]<val:
+                img[i,j] = 0
+    return img
+
+@numba.jit
+def invert_vesselness(vesselness,image):
+    ret = vesselness.copy()
+    for i in numba.prange(image.shape[0]):
+        for j in numba.prange(image.shape[1]):
+            if image[i,j]>0:
+                v = vesselness[i,j]
+                if v>0.001:
+                    ret[i,j]=0
+                else:
+                    ret[i,j]=1
+    return ret
+
+
 if __name__ == "__main__":
 
-    beta,c,sigma = map(float,sys.argv[1:])
-    img_path = r"C:\Users\chill\Pictures\Camera Roll\Outside_Modified.jpg"
+    # beta,c,sigma = map(float,sys.argv[1:])
+    beta,c,sigma = 1 ,.00006 , 10
+    img_path = r"C:\Users\chill\Documents\CV Term Project\Images\002_l_850_05.jpg"
+    img_path = r"C:\Users\chill\Documents\CV Term Project\Images\002_l_850_01.jpg"
+    # img_path = r"C:\Users\chill\Documents\CV Term Project\Images\002_l_850_05.jpg"
     
     image = imread(img_path)
-    image = cv2.resize(image,(image.shape[0]*3,image.shape[1]*3))
+    image = cv2.resize(image,(image.shape[1]*3,image.shape[0]*3))
     out_im = image.copy()
-    image = gaussian_filter(image,sigma=5)
-    image = cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)
 
-    # print(image)
-    # image = gaussian_filter(image,sigma=1,order=0)
-    
+    image = cv2.cvtColor(image,cv2.COLOR_BGR2GRAY)
+    image = thresh(image,70)
+    image = cv2.normalize(image, image, 0, 255,norm_type=cv2.NORM_MINMAX)
+
     image= image/255
     vesselness, sub = filter_image(image,sigma=sigma,beta=beta,c=c)
     imwrite("vesselness.png",vesselness)
-
     print(out_im.shape)
     print(vesselness.shape)
 
@@ -101,8 +124,6 @@ if __name__ == "__main__":
         for j in range(out_im.shape[1]):
             if vesselness[i,j]>0 :#and vesselness[i,j]<250:
                 out_im[i,j] = [0,255,0]
-    # out_im[:,:,1] = np.where()
-    # print(vesselness)
     imwrite("sub.png",out_im)
 
 # 7 .0014 6 Hand Example
