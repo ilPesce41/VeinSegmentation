@@ -11,6 +11,10 @@ import cv2
 from cv2 import imread,imwrite
 import sys
 import numba
+import os
+import shutil
+from tqdm import tqdm
+from multiprocessing import Pool,freeze_support
 
 #Blob and structureness parameters as defined in `Frangi-Net: A Neural Network Approach to Vessel Segmentation`
 beta = 0.5
@@ -42,7 +46,7 @@ def calculate_vesselness(l1,l2,beta,c):
     """
     vesselness = np.zeros(shape=l1.shape)
     
-    R = np.abs(l1)/np.abs(l2)
+    R = np.abs(l1)/(np.abs(l2)+1e-12)
     S = np.sqrt(l1**2 + l2**2)
     V0_l2pos = np.exp( -(R**2)/(2*beta**2) )
     V0_l2pos *= (1 - np.exp( -(S**2)/(2*c**2) ))
@@ -97,15 +101,7 @@ def invert_vesselness(vesselness,image):
                     ret[i,j]=1
     return ret
 
-
-if __name__ == "__main__":
-
-    # beta,c,sigma = map(float,sys.argv[1:])
-    beta,c,sigma = 1 ,.00006 , 10
-    img_path = r"C:\Users\chill\Documents\CV Term Project\Images\002_l_850_05.jpg"
-    img_path = r"C:\Users\chill\Documents\CV Term Project\Images\002_l_850_01.jpg"
-    # img_path = r"C:\Users\chill\Documents\CV Term Project\Images\002_l_850_05.jpg"
-    
+def process_image(img_path,beta,c,sigma,vessel_mask='vesselness.png',highlighted='sub.png'):
     image = imread(img_path)
     image = cv2.resize(image,(image.shape[1]*3,image.shape[0]*3))
     out_im = image.copy()
@@ -116,14 +112,66 @@ if __name__ == "__main__":
 
     image= image/255
     vesselness, sub = filter_image(image,sigma=sigma,beta=beta,c=c)
-    imwrite("vesselness.png",vesselness)
-    print(out_im.shape)
-    print(vesselness.shape)
+    imwrite(vessel_mask,vesselness)
+
 
     for i in range(out_im.shape[0]):
         for j in range(out_im.shape[1]):
             if vesselness[i,j]>0 :#and vesselness[i,j]<250:
                 out_im[i,j] = [0,255,0]
-    imwrite("sub.png",out_im)
+    imwrite(highlighted,out_im)
 
-# 7 .0014 6 Hand Example
+def batch_process_image(img_path):
+    img_path = img_path[0]
+    beta,c,sigma = 1 ,.00001 , 30
+    data_set_path = r"C:\Users\chill\Documents\CV Term Project\Images"
+    data_set_path = r"C:\Users\chill\Documents\CV Term Project\TopOfHand"
+    image = os.path.split(img_path)[-1]
+    vessel_path = os.path.join('toh_vessel_images',"v_"+image)
+    highlight_path = os.path.join('toh_highlight_images',"h_"+image)
+    selected_path  = os.path.join('toh_selected_images',image)
+
+    shutil.copyfile(img_path,selected_path)
+    process_image(img_path,beta,c,sigma,vessel_mask=vessel_path,highlighted=highlight_path)
+
+
+if __name__ == "__main__":
+
+    freeze_support()
+
+    # beta,c,sigma = map(float,sys.argv[1:])
+    beta,c,sigma = 1 ,.00006 , 10
+    # img_path = r"C:\Users\chill\Documents\CV Term Project\Images\002_l_850_05.jpg"
+    # process_image(img_path,beta,c,sigma)
+
+    data_set_path = r"C:\Users\chill\Documents\CV Term Project\Images"
+    data_set_path = r"C:\Users\chill\Documents\CV Term Project\TopOfHand"
+    images = os.listdir(data_set_path)
+    # def file_select(x):
+    #     if x.endswith('.jpg') and '_' in x:
+    #         if x.split("_")[2]=='850':
+    #             return True
+    #     return False
+
+    # images = list(filter(file_select,images))
+    
+    os.makedirs("toh_selected_images",exist_ok=True)
+    os.makedirs("toh_vessel_images",exist_ok=True)
+    os.makedirs("toh_highlight_images",exist_ok=True)
+
+    p = Pool(5)
+    batch_size=5
+    batches = []
+
+    
+
+    for image in tqdm(images):
+        img_path = os.path.join(data_set_path,image)
+        batches.append(tuple([img_path]))
+
+        if len(batches)==batch_size:
+            p.map(batch_process_image,batches)
+            batches = []
+    
+    if len(batches)>0:
+        p.map(batch_process_image,batches)

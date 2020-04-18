@@ -13,6 +13,26 @@ from keras.layers.convolutional import Conv2D, Conv2DTranspose
 from keras.layers.pooling import MaxPooling2D
 from keras.layers.merge import concatenate
 from keras.models import Model
+from scipy.ndimage import gaussian_filter
+from cv2 import imread,imwrite,resize, connectedComponentsWithStats
+import cv2
+from tqdm import tqdm
+import os
+import matplotlib.pyplot as plt
+
+seed = 1
+random_state = np.random.RandomState(seed) #Alwasy have the same test indices
+
+#Configurations
+FIRST_LOAD=False
+LOAD_OLD = True
+OLD_MODEL = "model.h5"
+SAVE_NAME = "model.h5"
+TRAIN = False
+X_dir = "toh_output"
+X_fil = "out_t"
+Y_dir = "toh_output"
+Y_fil = "out_v"
 
 def initialize_model(h,w,c,needs_scaling=True,dropout=0.1,summary=False):
     """
@@ -32,7 +52,7 @@ def initialize_model(h,w,c,needs_scaling=True,dropout=0.1,summary=False):
 
     #Set up input layer dimensions
     img_shape = (h,w,c)
-    input_layer = Input(img_shape)
+    input_layer = Input(shape=img_shape)
     #Adds divide by 255 if user specifies
     if needs_scaling:
         scaled_input = Lambda(lambda x: x / 255)(input_layer)
@@ -93,8 +113,126 @@ def initialize_model(h,w,c,needs_scaling=True,dropout=0.1,summary=False):
 
     return model
 
+def load_images(dir,x,y,to_gray=False,fil=''):
+    images = os.listdir(dir)
+    def file_select(x):
+        if (x.endswith('.png') or x.endswith('.jpg')) and '_' in x and (fil in x):
+            return True
+        return False
+    images = list(filter(file_select,images))
+    im_out = []
+    for im in tqdm(images):
+        tmp = imread(os.path.join(dir,im))
+        if to_gray:
+            tmp = cv2.cvtColor(tmp,cv2.COLOR_BGR2GRAY)
+            tmp = tmp/255
+        try:
+            im_out.append(resize(tmp,(x,y)))
+        except:
+            pass
+    return np.array(im_out)
 
 if __name__ == "__main__":
 
-    modlel = initialize_model(256,256,3)
+    # if FIRST_LOAD:
+    #     print("Loading Input Images")
+    #     X = load_images(X_dir,256,256,fil=X_fil)
+    #     print("Loading Output Images")
+    #     Y = load_images(Y_dir,256,256,fil=Y_fil,to_gray=True)
+    #     Y = np.expand_dims(Y,axis=-1)
+    #     np.save("X",X)
+    #     np.save("Y",Y)
+    # else:
+    #     X = np.load("X.npy")
+    #     Y = np.load("Y.npy")
 
+    # print("Loading Input Images")
+    # X1 = load_images('selected_images',256,256,fil='')
+    # print("Loading Output Images")
+    # Y1 = load_images('vessel_images',256,256,fil='',to_gray=True)
+    # Y1 = np.expand_dims(Y1,axis=-1)
+    # X = np.concatenate([X,X1])
+    # Y = np.concatenate([Y,Y1])
+
+    print("Images loaded")
+    # print("Input Shape: {}".format(str(X.shape)))
+    # print("Output Shape: {}".format(str(Y.shape)))
+
+    # indices = random_state.permutation(X.shape[0])
+    # train = indices[:int(len(indices)*.90)]
+    # test = indices[int(len(indices)*.90):]
+
+    # x_train,y_train = X[train],Y[train]
+    # x_test,y_test = X[test],Y[test]
+    
+    strategy = tf.distribute.MirroredStrategy()
+    if LOAD_OLD:
+        model = tf.keras.models.load_model(OLD_MODEL)
+    if TRAIN:
+        with strategy.scope():
+            if not LOAD_OLD:
+                model = initialize_model(256,256,3,summary=True)
+
+            callbacks = [tf.keras.callbacks.EarlyStopping(
+            monitor='val_loss', min_delta=0, patience=5, verbose=0, mode='auto',
+            baseline=None, restore_best_weights=True
+            )]
+            model.fit(x_train,y_train,epochs=50,validation_split=0.1,batch_size=8,callbacks=callbacks)
+
+    model.save(SAVE_NAME)
+
+    # preds = model.predict(x_test)
+    # for i in range(preds.shape[0]):
+    #     tmp = x_test[i].copy()
+    #     for x in range(tmp.shape[0]):
+    #         for y in range(tmp.shape[1]):
+    #             # print(preds[i,x,y])
+    #             if preds[i,x,y]>.3:
+    #                 # print(i)
+    #                 tmp[x,y] = [0,255,0]
+    #     imwrite("pred{}.jpg".format(i),tmp)
+
+
+    # model = tf.keras.models.load_model("model.h5")
+
+    print("Preds")
+
+    im = imread(r"C:\Users\chill\Desktop\normed.jpg")
+    # im = imread(r"C:\Users\chill\Pictures\Camera Roll\WIN_20200416_14_53_50_Pro (2).jpg")
+    im = imread(r"C:\Users\chill\Pictures\Camera Roll\WIN_20200416_16_40_00_Pro (2).jpg")
+    # for i in range(im.shape[0]):
+    #     for j in range(im.shape[1]):
+    #         if im[i,j,0]>200:
+    #             im[i,j] = [0,0,0]
+    im = cv2.resize(im,(256,256))
+    im2 = gaussian_filter(im,5,mode='wrap') 
+    img = np.array([im2])
+    # img = cv2.normalize(img, img, 0, 255,norm_type=cv2.NORM_MINMAX)
+    # imwrite("clipped.png",img)
+
+    pred = model.predict(np.array([im2]))
+    
+    pred = pred[0]
+    cpy = im.copy()
+    imwrite("temp.png",(255*pred).astype(int))
+    pred = imread("temp.png")
+    pred = cv2.cvtColor(pred, cv2.COLOR_BGR2GRAY)
+    pred = cv2.threshold(pred,120,255,cv2.THRESH_BINARY)[1]
+    # os.remove("temp.png")
+    comps, out, stats, _ = connectedComponentsWithStats(pred,connectivity=4)
+    sizes = stats[1:,-1]
+    comps-=1
+
+    for i in range(comps):
+        if sizes[i]<400:
+            pred[out==i+1] = [0]
+
+    for i in range(cpy.shape[0]):
+        for j in range(cpy.shape[1]):
+            if pred[i,j]>0:
+                cpy[i,j,1] = 255
+    # pred = pred*255
+    # pred2 = pred2*255
+    imwrite("pred{}.jpg".format(0),cpy)
+    imwrite("mask.jpg",pred.astype(int))
+    # imwrite("mask2.jpg",pred2.astype(int))

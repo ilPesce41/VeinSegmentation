@@ -1,0 +1,7 @@
+highlight_images/*
+selected_images/*
+vessel_images/*
+*.png
+*.jpg
+X.npy
+Y.npy
